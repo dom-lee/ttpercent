@@ -30,7 +30,7 @@ class DealDetailView(View):
                 "amountPercentage": int((deal.userdeal_set.aggregate(total_price=Sum('amount'))['total_price'] or 0)/deal.net_amount)*100,
             }
             
-            if Deal.Category(deal.category).label == '부동산 담보대출': 
+            if deal.category == Deal.Category.MORTGAGE.value: 
                 mortgage = Mortgage.objects.get(deal=deal)
                 mortgage_info = {
                     "latitude"               : mortgage.latitude,
@@ -160,27 +160,34 @@ class DealPaybackView(View):
 
         options = {}
 
-        for payback_schedule in PaybackSchedule.Option:
-            deal = Deal.objects.annotate(
-                total_tax        = Sum('paybackschedule__tax', filter=Q(paybackschedule__option=payback_schedule.value)),
-                total_interest   = Sum('paybackschedule__interest', filter=Q(paybackschedule__option=payback_schedule.value)),
-                total_commission = Sum('paybackschedule__commission', filter=Q(paybackschedule__option=payback_schedule.value)),
-                reality_price    = payback_schedule.value + F('total_interest') - F('total_tax') - F('total_commission')
-            ).get(id=deal_id)
+        deal = Deal.objects.get(id=deal_id)
 
-            options[payback_schedule.value] = {
-                "total_tax"        : deal.total_tax,
-                "total_interest"   : deal.total_interest,
-                "total_commission" : deal.total_commission,
-                "reality_price"    : deal.reality_price
-            }
+        payback_schedules = PaybackSchedule.objects.filter(deal_id = deal_id)
+
+        for payback_schedule in payback_schedules:
+            if not options.get(payback_schedule.option):
+                options[payback_schedule.option] = {
+                    'realityPrice': payback_schedule.option,
+                    'tax'         : 0,
+                    'interest'    : 0,
+                    'commission'  : 0
+                }
+
+            interest = payback_schedule.interest
+            tax = payback_schedule.tax
+            commission = payback_schedule.commission
+
+            options[payback_schedule.option]['realityPrice'] += (interest - tax - commission)
+            options[payback_schedule.option]['tax']          += tax
+            options[payback_schedule.option]['interest']     += interest
+            options[payback_schedule.option]['commission']   += commission
 
         results = {
-            'deposit'      : deposit,
-            'invested'     : UserDeal.objects.filter(user=user, deal_id=deal_id).exists(),
-            'status'       : Deal.Status(deal.status).name,
-            'invest_count' : UserDeal.objects.filter(deal_id=deal_id).count(),
-            'options'      : options
+            'deposit'     : deposit,
+            'invested'    : UserDeal.objects.filter(user=user, deal_id=deal_id).exists(),
+            'status'      : Deal.Status(deal.status).name,
+            'investCount' : UserDeal.objects.filter(deal_id=deal_id).count(),
+            'options'     : options
         }
-        
+
         return JsonResponse({"results": results}, status=200)
